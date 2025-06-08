@@ -1,2 +1,3 @@
 worker.go
 workerpool_test.go
+.gitignore
