@@ -34,30 +34,6 @@ func NewWorkerPool(ctx context.Context, jobsBuffer int) *WorkerPool {
 	return wp
 }
 
-func (wp *WorkerPool) Shutdown() {
-	wp.mu.Lock()
-	defer wp.mu.Unlock()
-
-	fmt.Println("WorkerPool is shutting down...")
-
-	for id, worker := range wp.workers {
-		select {
-		case <-worker.stopCh:
-			// Канал уже закрыт
-		default:
-			close(worker.stopCh)
-			fmt.Printf("Worker: %d is shutting down\n", id)
-		}
-	}
-
-	wp.mu.Unlock()
-	wp.wg.Wait()
-	wp.mu.Lock()
-
-	wp.workers = make(map[int]*Worker) // Очищаем мапу
-	fmt.Println("WorkerPool shutdown completed")
-}
-
 // Функция для добавления воркера в воркерпул
 func (wp *WorkerPool) AddWorker() {
 	wp.mu.Lock()
@@ -119,4 +95,25 @@ func (wp *WorkerPool) RemoveWorker() {
 		fmt.Printf("Worker: %d is removed from workerpool\n", id)
 		break
 	}
+}
+
+// Функция остановки и очистки воркерпула
+func (wp *WorkerPool) Shutdown() {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
+
+	fmt.Println("WorkerPool is shutting down...")
+
+	for id, worker := range wp.workers {
+		select {
+		case <-worker.stopCh:
+			// Канал уже закрыт
+		default:
+			close(worker.stopCh)
+			fmt.Printf("Worker: %d is shutting down\n", id)
+		}
+	}
+	wp.wg.Wait()
+	wp.workers = make(map[int]*Worker) // Очищаем мапу
+	fmt.Println("WorkerPool shutdown completed")
 }
