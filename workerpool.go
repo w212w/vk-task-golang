@@ -7,15 +7,9 @@ import (
 	"time"
 )
 
-const (
-	jobsBuffer int           = 5  // Буфер канала задач
-	jobTasks   int           = 5  // Количество задач
-	timeout    time.Duration = 10 // Таймаут для контекста
-)
-
 type Worker struct {
 	id     int
-	stopCh chan struct{}
+	stopCh chan struct{} // Канал для остановки
 }
 
 type WorkerPool struct {
@@ -29,13 +23,39 @@ type WorkerPool struct {
 }
 
 func NewWorkerPool(ctx context.Context, jobsBuffer int) *WorkerPool {
-	return &WorkerPool{
+	wp := &WorkerPool{
 		ctx:      ctx,
 		jobsChan: make(chan string, jobsBuffer),
 		resChan:  make(chan string, jobsBuffer),
 		workers:  make(map[int]*Worker),
 		workerID: 1,
 	}
+
+	return wp
+}
+
+func (wp *WorkerPool) Shutdown() {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
+
+	fmt.Println("WorkerPool is shutting down...")
+
+	for id, worker := range wp.workers {
+		select {
+		case <-worker.stopCh:
+			// Канал уже закрыт
+		default:
+			close(worker.stopCh)
+			fmt.Printf("Worker: %d is shutting down\n", id)
+		}
+	}
+
+	wp.mu.Unlock()
+	wp.wg.Wait()
+	wp.mu.Lock()
+
+	wp.workers = make(map[int]*Worker) // Очищаем мапу
+	fmt.Println("WorkerPool shutdown completed")
 }
 
 // Функция для добавления воркера в воркерпул
@@ -69,22 +89,21 @@ func (wp *WorkerPool) runWorker(wrk *Worker) {
 				}
 				fmt.Printf("Worker: %d is starting job: %s\n", wrk.id, job)
 				msg := fmt.Sprintf("Result for job: %s", job)
-				time.Sleep(3 * time.Second) // симуляция работы воркера
+				time.Sleep(2 * time.Second) // Cимуляция работы воркера
 				wp.resChan <- msg
-				fmt.Printf("Worker: %d is finished job: %s\n", wrk.id, job)
+				fmt.Printf("Worker: %d has finished job: %s\n", wrk.id, job)
 			case <-wp.ctx.Done():
-				fmt.Printf("Worker: %d was stopped by Context\n", wrk.id)
+				fmt.Printf("Worker: %d was stopped by Context...\n", wrk.id)
 				return
 			case <-wrk.stopCh:
-				fmt.Printf("Worker: %d was stopped by Remove function\n", wrk.id)
+				fmt.Printf("Worker: %d was stopped by stopCh...\n", wrk.id)
 				return
-
 			}
 		}
 	}()
 }
 
-// Функция для остановки и удаления воркера из воркерпула
+// Функция для остановки и удаления рандомного воркера из воркерпула
 func (wp *WorkerPool) RemoveWorker() {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
@@ -95,56 +114,9 @@ func (wp *WorkerPool) RemoveWorker() {
 	}
 	for id, worker := range wp.workers {
 		close(worker.stopCh)
-		fmt.Printf("Worker: %d is stopped\n", id)
+		fmt.Printf("Worker: %d is stopping...\n", id)
 		delete(wp.workers, id)
 		fmt.Printf("Worker: %d is removed from workerpool\n", id)
 		break
-	}
-}
-
-func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
-	defer cancel()
-	wp := NewWorkerPool(ctx, jobsBuffer)
-	wp.AddWorker()
-	wp.AddWorker()
-	wp.AddWorker()
-	wp.RemoveWorker()
-	wp.RemoveWorker()
-	wp.AddWorker()
-	wp.AddWorker()
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer close(wp.jobsChan)
-		for i := 0; i < jobTasks; i++ {
-			select {
-			case wp.jobsChan <- fmt.Sprintf("filename_%d.go", i):
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-		wg.Wait()
-		wp.wg.Wait()
-		close(wp.resChan)
-	}()
-
-	select {
-	case <-ctx.Done():
-		fmt.Println("Context cancelled")
-	case <-done:
-		fmt.Println("All workers done")
-	}
-
-	for res := range wp.resChan {
-		fmt.Println(res)
 	}
 }
